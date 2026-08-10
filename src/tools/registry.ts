@@ -60,6 +60,10 @@ import { getInventoryItems } from "./getInventoryItems.js";
 import { getPriceLists } from "./getPriceLists.js";
 import { getProductVariantsDetailed } from "./getProductVariantsDetailed.js";
 
+// Store management tools
+import { listShops } from "./listShops.js";
+import { switchShop } from "./switchShop.js";
+
 export const tools: ShopifyTool[] = [
   // Products (8)
   getProducts,
@@ -113,4 +117,7 @@ export const tools: ShopifyTool[] = [
   getInventoryItems,
   getPriceLists,
   getProductVariantsDetailed,
+  // Store management (2)
+  listShops,
+  switchShop,
 ];

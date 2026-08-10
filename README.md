@@ -120,6 +120,40 @@ claude mcp add shopify -- npx shopify-mcp \
   --domain your-store.myshopify.com
 ```
 
+### Managing Multiple Stores
+
+If you work with more than one Shopify store, set a single `SHOPIFY_STORES` environment variable to a JSON array of stores instead of the single-store flags/env vars above. Each entry uses one of the same two authentication options described above (client credentials or a static access token):
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "npx",
+      "args": ["shopify-mcp"],
+      "env": {
+        "SHOPIFY_STORES": "[{\"name\":\"store-a\",\"domain\":\"store-a.myshopify.com\",\"accessToken\":\"shpat_xxx\"},{\"name\":\"store-b\",\"domain\":\"store-b.myshopify.com\",\"clientId\":\"your_client_id\",\"clientSecret\":\"your_client_secret\"}]"
+      }
+    }
+  }
+}
+```
+
+Each store object supports:
+
+- `name` (required): a short identifier you'll use with `switch-shop`
+- `domain` (required): the store's `*.myshopify.com` domain
+- `accessToken`, **or** `clientId` + `clientSecret` (exactly one of these)
+- `default` (optional, boolean): set `true` on at most one store to make it the initially active store (otherwise the first entry in the array is used)
+
+Two extra tools become available:
+
+- **`list-shops`** — lists every configured store and which one is currently active
+- **`switch-shop`** — switches the active store by `name`; every subsequent tool call acts on that store until you switch again
+
+Call `switch-shop` and wait for its result before issuing tool calls that depend on the switch — the active store is shared state for the whole server process, so overlapping calls could otherwise race.
+
+If `SHOPIFY_STORES` isn't set, the server behaves exactly as in single-store mode described above — existing setups are unaffected.
+
 ### Alternative: Run Locally with Environment Variables
 
 If you prefer to use environment variables instead of command-line arguments:
@@ -499,6 +533,22 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
      - `id` (string, required): GID of the resource
      - `tags` (array of strings, required): Tags to add or remove
      - `action` (string, required): `"add"` or `"remove"`
+
+### Store Management (2 tools)
+
+1. **`list-shops`**
+
+   - List all configured Shopify stores and which one is currently active
+   - Inputs: none
+   - Returns: `{ shops: [{ name, domain, current }], currentStore }`
+
+2. **`switch-shop`**
+
+   - Switch the active Shopify store. All subsequent tool calls act on this store until switched again
+   - Inputs:
+     - `name` (string, required): Store name as returned by `list-shops`
+   - Returns: `{ switchedTo, domain }`
+   - Only relevant when `SHOPIFY_STORES` is configured (see [Managing Multiple Stores](#managing-multiple-stores))
 
 ### Order Query Filter Reference
 
