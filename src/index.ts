@@ -139,12 +139,34 @@ async function buildStoreRuntime(entry: StoreEntry): Promise<StoreRuntimeResult>
   return { name: entry.name, domain: entry.domain, client, auth };
 }
 
-const storeRuntimes = await Promise.all(storeEntries.map((entry) => buildStoreRuntime(entry)));
+// A store that fails to connect (bad credentials, app not installed on that
+// shop, etc.) must not take down every other already-working store — build
+// each one independently and skip the ones that fail.
+const buildResults = await Promise.allSettled(storeEntries.map((entry) => buildStoreRuntime(entry)));
+const storeRuntimes: StoreRuntimeResult[] = [];
+buildResults.forEach((result, i) => {
+  if (result.status === "fulfilled") {
+    storeRuntimes.push(result.value);
+  } else {
+    const entry = storeEntries[i];
+    const reason = result.reason instanceof Error ? result.reason.message : String(result.reason);
+    console.error(`Warning: failed to connect to store "${entry.name}" (${entry.domain}): ${reason}`);
+    console.error(`  Skipping "${entry.name}" for now. Fix its credentials and redeploy to add it back.`);
+  }
+});
+
+if (storeRuntimes.length === 0) {
+  console.error("Error: failed to connect to any configured store. Exiting.");
+  process.exit(1);
+}
+
 for (const runtime of storeRuntimes) {
   storeManager.register(runtime);
 }
 
-const initialStoreName = storeEntries.find((entry) => entry.default)?.name ?? storeEntries[0].name;
+const connectedNames = new Set(storeRuntimes.map((runtime) => runtime.name));
+const initialStoreName =
+  storeEntries.find((entry) => entry.default && connectedNames.has(entry.name))?.name ?? storeRuntimes[0].name;
 storeManager.setCurrent(initialStoreName);
 
 if (!usingMultiStore) {
