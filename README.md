@@ -198,6 +198,29 @@ shopify-mcp --clientId=<ID> --clientSecret=<SECRET> --domain=<YOUR_SHOP>.myshopi
 
 **⚠️ Important:** If you see errors about "SHOPIFY_ACCESS_TOKEN environment variable is required" when using command-line arguments, you might have a different package installed. Make sure you're using `shopify-mcp`, not `shopify-mcp-server`.
 
+### Running as a Remote Server (Railway, etc.)
+
+By default this server runs over **stdio** — a local subprocess a client spawns directly (as in all the examples above). To run it instead as an always-on server that remote MCP clients connect to over HTTP, set:
+
+- `MCP_TRANSPORT=http` — switches to the [Streamable HTTP](https://modelcontextprotocol.io/docs/concepts/transports) transport, served at `POST /mcp`
+- `MCP_AUTH_TOKEN` — a shared secret (at least 16 characters, e.g. `openssl rand -hex 32`) that every request must send as `Authorization: Bearer <token>`. **Required** in HTTP mode — the server refuses to start without it. Without this, anyone who finds the URL could fully manage your connected store(s) (create/delete products, issue refunds, cancel orders, etc.)
+- `PORT` — the port to listen on (Railway sets this automatically; defaults to `3000` otherwise)
+
+An unauthenticated `GET /health` route is also exposed for platform health checks.
+
+#### Deploying to Railway
+
+1. Create a new Railway project from this repo (`railway.json` in the repo root already configures the build/start/health-check commands).
+2. Set environment variables on the Railway service:
+   - Your store credentials — either `SHOPIFY_STORES` (see [Managing Multiple Stores](#managing-multiple-stores)) or the single-store vars (`MYSHOPIFY_DOMAIN` + `SHOPIFY_ACCESS_TOKEN`, or `+ SHOPIFY_CLIENT_ID`/`SHOPIFY_CLIENT_SECRET`)
+   - `MCP_TRANSPORT=http`
+   - `MCP_AUTH_TOKEN=<a long random secret>`
+   - *(leave `PORT` unset — Railway injects it)*
+3. Deploy. Railway will run `npm run build` then `npm start`, and health-check `GET /health`.
+4. Point your MCP client at `https://<your-app>.up.railway.app/mcp` using the Streamable HTTP transport, sending `Authorization: Bearer <MCP_AUTH_TOKEN>` on every request — consult your client's docs for how to attach a custom header to a remote MCP server (for example, Claude Code's `claude mcp add --transport http <name> <url> --header "Authorization: Bearer <token>"`).
+
+This mode is designed for a single trusted user/team with one shared secret, not multi-tenant use — it doesn't implement per-user OAuth.
+
 ## Available Tools (31)
 
 ### Pagination, Sorting & Filtering

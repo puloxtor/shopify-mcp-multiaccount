@@ -6,10 +6,12 @@ import dotenv from "dotenv";
 import { GraphQLClient } from "graphql-request";
 import minimist from "minimist";
 
+import { startHttpServer } from "./lib/httpServer.js";
 import { ShopifyAuth } from "./lib/shopifyAuth.js";
 import { storeManager } from "./lib/storeManager.js";
 import type { StoreEntry } from "./lib/storesConfig.js";
 import { parseStoresConfig } from "./lib/storesConfig.js";
+import { registerTools } from "./lib/toolUtils.js";
 import { tools } from "./tools/registry.js";
 
 // Parse command line arguments
@@ -159,33 +161,42 @@ for (const tool of tools) {
   tool.initialize(routingClient);
 }
 
-// Set up MCP server
-const server = new McpServer({
+const serverInfo = {
   name: "shopify",
   version: "1.0.0",
   description:
-    "MCP Server for Shopify API, enabling interaction with store data through GraphQL API"
-});
+    "MCP Server for Shopify API, enabling interaction with store data through GraphQL API",
+};
 
-// Register all tools with the MCP server
-for (const tool of tools) {
-  server.tool(
-    tool.name,
-    tool.schema.shape,
-    async (args) => {
-      const result = await tool.execute(args);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result) }]
-      };
-    }
-  );
+// Transport defaults to stdio (a local subprocess a client spawns directly,
+// e.g. via npx) unless MCP_TRANSPORT=http is set, for running this as an
+// always-on remote server (e.g. on Railway).
+const MCP_TRANSPORT = (argv.transport || process.env.MCP_TRANSPORT || "stdio").toLowerCase();
+
+if (MCP_TRANSPORT === "http") {
+  const MCP_AUTH_TOKEN = argv.authToken || process.env.MCP_AUTH_TOKEN;
+  if (!MCP_AUTH_TOKEN || MCP_AUTH_TOKEN.length < 16) {
+    console.error("Error: MCP_AUTH_TOKEN is required for HTTP transport and must be at least 16 characters.");
+    console.error("Anyone who knows this server's URL but not this token cannot use it.");
+    console.error("Generate one, e.g.: openssl rand -hex 32");
+    console.error("Then set it via --authToken=... or the MCP_AUTH_TOKEN environment variable.");
+    process.exit(1);
+  }
+
+  const PORT = Number(argv.port || process.env.PORT || 3000);
+  startHttpServer({ port: PORT, authToken: MCP_AUTH_TOKEN, tools, serverInfo });
+} else if (MCP_TRANSPORT === "stdio") {
+  const server = new McpServer(serverInfo);
+  registerTools(server, tools);
+
+  const transport = new StdioServerTransport();
+  server
+    .connect(transport)
+    .then(() => {})
+    .catch((error: unknown) => {
+      console.error("Failed to start Shopify MCP Server:", error);
+    });
+} else {
+  console.error(`Error: Unknown MCP_TRANSPORT "${MCP_TRANSPORT}". Expected "stdio" or "http".`);
+  process.exit(1);
 }
-
-// Start the server
-const transport = new StdioServerTransport();
-server
-  .connect(transport)
-  .then(() => {})
-  .catch((error: unknown) => {
-    console.error("Failed to start Shopify MCP Server:", error);
-  });

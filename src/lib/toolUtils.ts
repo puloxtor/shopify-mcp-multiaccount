@@ -1,3 +1,4 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { GraphQLClient } from "graphql-request";
 import type { z } from "zod";
 
@@ -68,6 +69,22 @@ export function handleToolError(operation: string, error: unknown): never {
   }
   const message = error instanceof Error ? error.message : String(error);
   throw new Error(`Failed to ${operation}: ${message}`);
+}
+
+/**
+ * Register every tool's schema/handler on an MCP server instance. Shared
+ * between the stdio transport (registered once at startup) and the HTTP
+ * transport (registered fresh per stateless request).
+ */
+export function registerTools(server: McpServer, tools: ShopifyTool[]): void {
+  for (const tool of tools) {
+    server.tool(tool.name, tool.schema.shape, async (args) => {
+      const result = await tool.execute(args);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+      };
+    });
+  }
 }
 
 /**
