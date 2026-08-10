@@ -82,8 +82,13 @@ export class StoreManager {
       const manager = this;
       const proxy = {
         request(...args: unknown[]) {
-          const requestFn = manager.getCurrent().client.request as (...a: unknown[]) => unknown;
-          return requestFn(...args);
+          // Call .request() as a method on the real client (not a detached
+          // function reference) — graphql-request's GraphQLClient.request
+          // reads `this.url`/`this.requestConfig` internally, so calling it
+          // unbound throws "Cannot read properties of undefined".
+          const client = manager.getCurrent().client;
+          const requestFn = client.request as (...a: unknown[]) => unknown;
+          return requestFn.apply(client, args);
         },
       };
       this.routingClient = proxy as unknown as GraphQLClient;
