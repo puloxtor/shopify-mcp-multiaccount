@@ -64,6 +64,10 @@ import { getProductVariantsDetailed } from "./getProductVariantsDetailed.js";
 import { listShops } from "./listShops.js";
 import { switchShop } from "./switchShop.js";
 
+// Raw GraphQL passthrough
+import { graphqlQuery } from "./graphqlQuery.js";
+import { graphqlMutation } from "./graphqlMutation.js";
+
 export const tools: ShopifyTool[] = [
   // Products (8)
   getProducts,
@@ -120,4 +124,7 @@ export const tools: ShopifyTool[] = [
   // Store management (2)
   listShops,
   switchShop,
+  // Raw GraphQL passthrough (2)
+  graphqlQuery,
+  graphqlMutation,
 ];
