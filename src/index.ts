@@ -184,7 +184,24 @@ if (MCP_TRANSPORT === "http") {
   }
 
   const PORT = Number(argv.port || process.env.PORT || 3000);
-  startHttpServer({ port: PORT, authToken: MCP_AUTH_TOKEN, tools, serverInfo });
+
+  // The OAuth flow (needed for claude.ai / Claude Desktop connectors) needs
+  // to know this server's own externally-reachable HTTPS URL. Railway sets
+  // RAILWAY_PUBLIC_DOMAIN automatically once a domain is generated; other
+  // hosts (or a custom domain) can set MCP_PUBLIC_URL explicitly.
+  const explicitPublicUrl = argv.publicUrl || process.env.MCP_PUBLIC_URL;
+  const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+  const rawPublicUrl = explicitPublicUrl || (railwayDomain ? `https://${railwayDomain}` : `http://localhost:${PORT}`);
+
+  let publicUrl: URL;
+  try {
+    publicUrl = new URL(rawPublicUrl);
+  } catch {
+    console.error(`Error: could not parse public URL "${rawPublicUrl}". Set MCP_PUBLIC_URL to this server's externally-reachable https URL.`);
+    process.exit(1);
+  }
+
+  startHttpServer({ port: PORT, authToken: MCP_AUTH_TOKEN, publicUrl, tools, serverInfo });
 } else if (MCP_TRANSPORT === "stdio") {
   const server = new McpServer(serverInfo);
   registerTools(server, tools);
