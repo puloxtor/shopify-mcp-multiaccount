@@ -1,4 +1,8 @@
-import type { ShopifyTool } from "../lib/toolUtils.js";
+import type { ShopifyTool, ToolAnnotations } from "../lib/toolUtils.js";
+
+// Store management (multi-account)
+import { listStores } from "./listStores.js";
+import { switchStore } from "./switchStore.js";
 
 // Product tools
 import { getProducts } from "./getProducts.js";
@@ -60,7 +64,44 @@ import { getInventoryItems } from "./getInventoryItems.js";
 import { getPriceLists } from "./getPriceLists.js";
 import { getProductVariantsDetailed } from "./getProductVariantsDetailed.js";
 
+/**
+ * Tools that can destroy or irreversibly alter data.
+ *
+ * Two things key off this list:
+ *   - `annotations.destructiveHint`, surfaced to the MCP client, and
+ *   - the `store` argument becoming **required** when more than one store is
+ *     configured, so a destructive write can never silently inherit whichever
+ *     store happened to be active.
+ */
+export const DESTRUCTIVE_TOOLS = new Set([
+  "delete-product",
+  "delete-product-variants",
+  "delete-customer",
+  "delete-metafields",
+  "order-cancel",
+  "refund-create",
+  "customer-merge",
+  "complete-draft-order",
+  "create-fulfillment",
+  "order-mark-as-paid",
+  "inventory-set-quantities",
+]);
+
+/** Annotations for tools that do not declare their own. */
+export function annotationsFor(name: string): ToolAnnotations {
+  if (DESTRUCTIVE_TOOLS.has(name)) {
+    return { readOnlyHint: false, destructiveHint: true, idempotentHint: false };
+  }
+  if (name.startsWith("get-")) {
+    return { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
+  }
+  return { readOnlyHint: false, destructiveHint: false };
+}
+
 export const tools: ShopifyTool[] = [
+  // Store management (2)
+  listStores,
+  switchStore,
   // Products (8)
   getProducts,
   getProductById,

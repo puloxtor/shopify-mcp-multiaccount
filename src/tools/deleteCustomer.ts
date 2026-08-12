@@ -1,31 +1,22 @@
-import type { GraphQLClient } from "graphql-request";
-import { gql } from "graphql-request";
+import { gql } from "../lib/gql.js";
 import { z } from "zod";
-import { checkUserErrors, handleToolError } from "../lib/toolUtils.js";
+import { toNumericId, checkUserErrors, handleToolError, type ToolContext } from "../lib/toolUtils.js";
 
 // Input schema for deleting a customer
 const DeleteCustomerInputSchema = z.object({
-  id: z.string().regex(/^\d+$/, "Customer ID must be numeric")
+  id: z.string().describe("Customer ID — numeric (\"6276879810626\") or GID (\"gid://shopify/Customer/6276879810626\"), as returned by get-customers")
 });
 
 type DeleteCustomerInput = z.infer<typeof DeleteCustomerInputSchema>;
-
-// Will be initialized in index.ts
-let shopifyClient: GraphQLClient;
 
 const deleteCustomer = {
   name: "delete-customer",
   description: "Delete a customer",
   schema: DeleteCustomerInputSchema,
 
-  // Add initialize method to set up the GraphQL client
-  initialize(client: GraphQLClient) {
-    shopifyClient = client;
-  },
-
-  execute: async (input: DeleteCustomerInput) => {
+  execute: async (input: DeleteCustomerInput, ctx: ToolContext) => {
     try {
-      const { id } = input;
+      const id = toNumericId(input.id, "Customer");
 
       // Convert numeric ID to GID format
       const customerGid = `gid://shopify/Customer/${id}`;
@@ -44,7 +35,7 @@ const deleteCustomer = {
         }
       `;
 
-      const data = (await shopifyClient.request(query, {
+      const data = (await ctx.client.request(query, {
         input: { id: customerGid }
       })) as {
         customerDelete: {

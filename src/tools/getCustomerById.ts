@@ -1,31 +1,22 @@
-import type { GraphQLClient } from "graphql-request";
-import { gql } from "graphql-request";
+import { gql } from "../lib/gql.js";
 import { z } from "zod";
-import { handleToolError, edgesToNodes } from "../lib/toolUtils.js";
+import { toNumericId, handleToolError, edgesToNodes, type ToolContext } from "../lib/toolUtils.js";
 
 // Input schema for getting a customer by ID
 const GetCustomerByIdInputSchema = z.object({
-  id: z.string().regex(/^\d+$/, "Customer ID must be numeric")
+  id: z.string().describe("Customer ID — numeric (\"6276879810626\") or GID (\"gid://shopify/Customer/6276879810626\"), as returned by get-customers")
 });
 
 type GetCustomerByIdInput = z.infer<typeof GetCustomerByIdInputSchema>;
-
-// Will be initialized in index.ts
-let shopifyClient: GraphQLClient;
 
 const getCustomerById = {
   name: "get-customer-by-id",
   description: "Get a single customer by ID",
   schema: GetCustomerByIdInputSchema,
 
-  // Add initialize method to set up the GraphQL client
-  initialize(client: GraphQLClient) {
-    shopifyClient = client;
-  },
-
-  execute: async (input: GetCustomerByIdInput) => {
+  execute: async (input: GetCustomerByIdInput, ctx: ToolContext) => {
     try {
-      const { id } = input;
+      const id = toNumericId(input.id, "Customer");
 
       // Convert numeric ID to GID format
       const customerGid = `gid://shopify/Customer/${id}`;
@@ -94,7 +85,7 @@ const getCustomerById = {
         id: customerGid
       };
 
-      const data = (await shopifyClient.request(query, variables)) as {
+      const data = (await ctx.client.request(query, variables)) as {
         customer: any;
       };
 

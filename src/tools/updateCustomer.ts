@@ -1,11 +1,10 @@
-import type { GraphQLClient } from "graphql-request";
-import { gql } from "graphql-request";
+import { gql } from "../lib/gql.js";
 import { z } from "zod";
-import { checkUserErrors, handleToolError } from "../lib/toolUtils.js";
+import { toNumericId, checkUserErrors, handleToolError, type ToolContext } from "../lib/toolUtils.js";
 
 // Input schema for updating a customer
 const UpdateCustomerInputSchema = z.object({
-  id: z.string().regex(/^\d+$/, "Customer ID must be numeric"),
+  id: z.string().describe("Customer ID — numeric (\"6276879810626\") or GID (\"gid://shopify/Customer/6276879810626\"), as returned by get-customers"),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
   email: z.string().email().optional(),
@@ -35,22 +34,15 @@ const UpdateCustomerInputSchema = z.object({
 
 type UpdateCustomerInput = z.infer<typeof UpdateCustomerInputSchema>;
 
-// Will be initialized in index.ts
-let shopifyClient: GraphQLClient;
-
 const updateCustomer = {
   name: "update-customer",
   description: "Update a customer's information",
   schema: UpdateCustomerInputSchema,
 
-  // Add initialize method to set up the GraphQL client
-  initialize(client: GraphQLClient) {
-    shopifyClient = client;
-  },
-
-  execute: async (input: UpdateCustomerInput) => {
+  execute: async (input: UpdateCustomerInput, ctx: ToolContext) => {
     try {
-      const { id, ...customerFields } = input;
+      const { id: rawId, ...customerFields } = input;
+      const id = toNumericId(rawId, "Customer");
 
       // Convert numeric ID to GID format
       const customerGid = `gid://shopify/Customer/${id}`;
@@ -104,7 +96,7 @@ const updateCustomer = {
         }
       };
 
-      const data = (await shopifyClient.request(query, variables)) as {
+      const data = (await ctx.client.request(query, variables)) as {
         customerUpdate: {
           customer: any;
           userErrors: Array<{

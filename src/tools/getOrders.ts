@@ -1,13 +1,12 @@
-import type { GraphQLClient } from "graphql-request";
-import { gql } from "graphql-request";
+import { gql } from "../lib/gql.js";
 import { z } from "zod";
-import { handleToolError, edgesToNodes, type ShopifyConnection } from "../lib/toolUtils.js";
+import { handleToolError, edgesToNodes, type ShopifyConnection, type ToolContext } from "../lib/toolUtils.js";
 import { formatOrderSummary } from "../lib/formatters.js";
 
 // Input schema for getOrders
 const GetOrdersInputSchema = z.object({
   status: z.enum(["any", "open", "closed", "cancelled"]).default("any"),
-  limit: z.number().default(10),
+  limit: z.number().int().min(1).max(250).default(10),
   after: z.string().optional().describe("Cursor for forward pagination"),
   before: z.string().optional().describe("Cursor for backward pagination"),
   sortKey: z.enum([
@@ -21,20 +20,12 @@ const GetOrdersInputSchema = z.object({
 
 type GetOrdersInput = z.infer<typeof GetOrdersInputSchema>;
 
-// Will be initialized in index.ts
-let shopifyClient: GraphQLClient;
-
 const getOrders = {
   name: "get-orders",
   description: "Get orders with optional filtering by status",
   schema: GetOrdersInputSchema,
 
-  // Add initialize method to set up the GraphQL client
-  initialize(client: GraphQLClient) {
-    shopifyClient = client;
-  },
-
-  execute: async (input: GetOrdersInput) => {
+  execute: async (input: GetOrdersInput, ctx: ToolContext) => {
     try {
       const { status, limit, after, before, sortKey, reverse, query: rawQuery } = input;
 
@@ -144,7 +135,7 @@ const getOrders = {
         ...(reverse !== undefined && { reverse })
       };
 
-      const data = (await shopifyClient.request(query, variables)) as {
+      const data = (await ctx.client.request(query, variables)) as {
         orders: ShopifyConnection<any>;
       };
 

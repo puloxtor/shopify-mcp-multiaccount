@@ -1,13 +1,12 @@
-import type { GraphQLClient } from "graphql-request";
-import { gql } from "graphql-request";
+import { gql } from "../lib/gql.js";
 import { z } from "zod";
-import { handleToolError, edgesToNodes, type ShopifyConnection } from "../lib/toolUtils.js";
+import { toNumericId, handleToolError, edgesToNodes, type ShopifyConnection, type ToolContext } from "../lib/toolUtils.js";
 import { formatOrderSummary } from "../lib/formatters.js";
 
 // Input schema for getting customer orders
 const GetCustomerOrdersInputSchema = z.object({
-  customerId: z.string().regex(/^\d+$/, "Customer ID must be numeric"),
-  limit: z.number().default(10),
+  customerId: z.string().describe("Customer ID — numeric (\"6276879810626\") or GID (\"gid://shopify/Customer/6276879810626\"), as returned by get-customers"),
+  limit: z.number().int().min(1).max(250).default(10),
   after: z.string().optional().describe("Cursor for forward pagination"),
   before: z.string().optional().describe("Cursor for backward pagination"),
   sortKey: z.enum([
@@ -20,22 +19,15 @@ const GetCustomerOrdersInputSchema = z.object({
 
 type GetCustomerOrdersInput = z.infer<typeof GetCustomerOrdersInputSchema>;
 
-// Will be initialized in index.ts
-let shopifyClient: GraphQLClient;
-
 const getCustomerOrders = {
   name: "get-customer-orders",
   description: "Get orders for a specific customer",
   schema: GetCustomerOrdersInputSchema,
 
-  // Add initialize method to set up the GraphQL client
-  initialize(client: GraphQLClient) {
-    shopifyClient = client;
-  },
-
-  execute: async (input: GetCustomerOrdersInput) => {
+  execute: async (input: GetCustomerOrdersInput, ctx: ToolContext) => {
     try {
-      const { customerId, limit, after, before, sortKey, reverse } = input;
+      const { customerId: rawCustomerId, limit, after, before, sortKey, reverse } = input;
+      const customerId = toNumericId(rawCustomerId, "Customer");
 
       // Query to get orders for a specific customer
       const query = gql`
@@ -126,7 +118,7 @@ const getCustomerOrders = {
         ...(reverse !== undefined && { reverse })
       };
 
-      const data = (await shopifyClient.request(query, variables)) as {
+      const data = (await ctx.client.request(query, variables)) as {
         orders: ShopifyConnection<any>;
       };
 

@@ -1,7 +1,6 @@
-import type { GraphQLClient } from "graphql-request";
-import { gql } from "graphql-request";
+import { gql } from "../lib/gql.js";
 import { z } from "zod";
-import { handleToolError, edgesToNodes } from "../lib/toolUtils.js";
+import { handleToolError, edgesToNodes, type ToolContext } from "../lib/toolUtils.js";
 import { formatLineItems, formatOrderSummary } from "../lib/formatters.js";
 
 // Input schema for getOrderById
@@ -11,20 +10,12 @@ const GetOrderByIdInputSchema = z.object({
 
 type GetOrderByIdInput = z.infer<typeof GetOrderByIdInputSchema>;
 
-// Will be initialized in index.ts
-let shopifyClient: GraphQLClient;
-
 const getOrderById = {
   name: "get-order-by-id",
   description: "Get a specific order by ID",
   schema: GetOrderByIdInputSchema,
 
-  // Add initialize method to set up the GraphQL client
-  initialize(client: GraphQLClient) {
-    shopifyClient = client;
-  },
-
-  execute: async (input: GetOrderByIdInput) => {
+  execute: async (input: GetOrderByIdInput, ctx: ToolContext) => {
     try {
       const { orderId } = input;
 
@@ -51,7 +42,7 @@ const getOrderById = {
             }
           }
         `;
-        const nameData = (await shopifyClient.request(nameQuery, {
+        const nameData = (await ctx.client.request(nameQuery, {
           query: `name:${orderName}`,
         })) as { orders: { edges: Array<{ node: { id: string } }> } };
 
@@ -187,7 +178,7 @@ const getOrderById = {
         id: resolvedId
       };
 
-      const data = (await shopifyClient.request(query, variables)) as {
+      const data = (await ctx.client.request(query, variables)) as {
         order: any;
       };
 
