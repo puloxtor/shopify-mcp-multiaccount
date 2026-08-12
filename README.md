@@ -1,170 +1,177 @@
-# Shopify MCP Server
+# Shopify MCP Server — Multi-Account
 
-(please leave a star if you like!)
+An MCP server for the Shopify Admin GraphQL API that manages **many stores from a single server process** and lets you switch between them mid-conversation.
 
-MCP Server for Shopify API, enabling interaction with store data through GraphQL API. This server provides tools for managing products, customers, orders, and more.
+Forked from [GeLi2001/shopify-mcp](https://github.com/GeLi2001/shopify-mcp), which is single-store.
 
-**📦 Package Name: `shopify-mcp`**
-**🚀 Command: `shopify-mcp` (NOT `shopify-mcp-server`)**
+## Why one server instead of one per store
 
-<a href="https://glama.ai/mcp/servers/@GeLi2001/shopify-mcp">
-  <img width="380" height="200" src="https://glama.ai/mcp/servers/@GeLi2001/shopify-mcp/badge" alt="Shopify MCP server" />
-</a>
+The obvious way to reach several stores is to register the single-store server once per store. That falls down quickly:
+
+- Every store adds a **full duplicate copy of all 44 tools** to the model's context (~8k tokens each), with identical names distinguished only by a server prefix.
+- Nothing tells the model *which* store a tool acts on, so a destructive call can land on the wrong store with no trace in the response.
+- Each server resolves its credentials at startup, so one unreachable store takes its whole server down — opaquely.
+
+This fork registers the tool set **once**, adds a store dimension to it, and stamps every response with the store it came from.
 
 ## Features
 
-- **Product Management**: Full CRUD for products, variants, and options (8 tools)
-- **Customer Management**: Full CRUD, merge, and address management (8 tools)
-- **Order Management**: Smart lookup, cancel, close/open, mark as paid, fulfillment, refunds (10 tools)
-- **Metafield Management**: Get, set, and delete metafields on any resource (3 tools)
-- **Inventory Management**: Set absolute inventory quantities at locations (1 tool)
-- **Tag Management**: Add/remove tags on any taggable resource (1 tool)
-- **Pagination & Sorting**: Cursor-based pagination and sort keys on all list queries
-- **Advanced Filtering**: Pass-through Shopify query syntax for all list endpoints
-- **GraphQL Integration**: Direct integration with Shopify's GraphQL Admin API (2026-01)
-- **Comprehensive Error Handling**: Clear error messages for API and authentication issues
+- **Multiple stores, one server**: configure any number of stores; the tool list is registered once regardless of how many.
+- **Seamless switching**: `switch-store` changes the active store for the rest of the conversation; every tool also takes an optional `store` argument to redirect a single call without switching.
+- **Store provenance on every response**: results carry `{"store": {"alias": …, "domain": …}}` so the model can always see where it just acted.
+- **Guard rails on destructive calls**: when more than one store is configured, irreversible tools (`order-cancel`, `delete-product`, `refund-create`, …) *require* an explicit `store`.
+- **Lazy, isolated connections**: stores connect on first use, so a misconfigured store never blocks the server or the other stores.
+- **Resilient transport**: request timeouts, retry with backoff on 429/5xx/network errors, automatic retry on Shopify's `THROTTLED` rate-limit error, and one transparent token refresh on 401.
+- **Sleep-safe auth**: OAuth tokens are validated on the request path, not by a background timer, so suspending the machine doesn't leave the server serving 401s.
+- **Product / Customer / Order / Metafield / Inventory management**: 44 tools over the Admin GraphQL API (2026-01).
 
 ## Prerequisites
 
-1. Node.js (version 18 or higher)
-2. A Shopify store with a custom app (see setup instructions below)
+1. Node.js 18.17 or newer
+2. One Shopify custom app per store (see below)
 
 ## Setup
 
-### Authentication
+### 1. Get credentials for each store
 
-This server supports two authentication methods:
+**Client Credentials (Dev Dashboard apps, January 2026+)** — as of January 1 2026, new Shopify apps are created in the Dev Dashboard and issue OAuth client credentials rather than static tokens.
 
-#### Option 1: Client Credentials (Dev Dashboard apps, January 2026+)
+1. In Shopify admin: **Settings → Apps and sales channels → Develop apps → Build app in dev dashboard**
+2. Configure **Admin API scopes** (`read_products`, `write_products`, `read_customers`, `write_customers`, `read_orders`, `write_orders`, plus any others you need)
+3. Install the app on the store
+4. Copy the **Client ID** and **Client Secret**
 
-As of January 1, 2026, new Shopify apps are created in the **Dev Dashboard** and use OAuth client credentials instead of static access tokens.
+The server exchanges these for a short-lived access token and refreshes it automatically.
 
-1. From your Shopify admin, go to **Settings** > **Apps and sales channels**
-2. Click **Develop apps** > **Build app in dev dashboard**
-3. Create a new app and configure **Admin API scopes**:
-   - `read_products`, `write_products`
-   - `read_customers`, `write_customers`
-   - `read_orders`, `write_orders`
-4. Install the app on your store
-5. Copy your **Client ID** and **Client Secret** from the app's API credentials
+**Static Access Token (legacy apps)** — an existing custom app's `shpat_…` token still works; use `accessToken` instead of the client ID/secret pair.
 
-The server will automatically exchange these for an access token and refresh it before it expires (tokens are valid for ~24 hours).
+### 2. Write a store config
 
-#### Option 2: Static Access Token (legacy apps)
+Create `shopify-stores.json` (this filename is gitignored):
 
-If you have an existing custom app with a static `shpat_` access token, you can still use it directly.
+```json
+{
+  "defaultStore": "acme",
+  "stores": [
+    {
+      "alias": "acme",
+      "label": "ACME Retail (production)",
+      "domain": "acme.myshopify.com",
+      "clientId": "${ACME_CLIENT_ID}",
+      "clientSecret": "${ACME_CLIENT_SECRET}"
+    },
+    {
+      "alias": "widgets",
+      "label": "Widgets EU",
+      "domain": "widgets-eu.myshopify.com",
+      "accessToken": "${WIDGETS_ACCESS_TOKEN}"
+    }
+  ]
+}
+```
 
-### Usage with Claude Desktop
+| Field | Required | Notes |
+|---|---|---|
+| `alias` | no | Short handle used to target the store. Defaults to the domain's subdomain. Lowercase letters, digits, `-`, `_`. |
+| `domain` | **yes** | `your-store.myshopify.com`. A bare `your-store` is expanded; a full URL is trimmed. |
+| `label` | no | Human name, also usable as a switch target. |
+| `accessToken` | one of | Legacy static token. |
+| `clientId` + `clientSecret` | one of | Dev Dashboard client credentials. |
+| `apiVersion` | no | Per-store override of the default (`2026-01`). |
 
-**Client Credentials (recommended):**
+Any string may reference an environment variable as `${VAR_NAME}`, so the file can be committed while secrets stay in the environment. A missing variable is a startup error naming the variable — never a silent empty credential.
+
+`defaultStore` sets the store that is active when the server starts. Omit it and, with more than one store configured, the model must call `switch-store` or pass `store` explicitly.
+
+See [`shopify-stores.example.json`](./shopify-stores.example.json).
+
+### 3. Register the server
+
+**Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%/Claude/claude_desktop_config.json` (Windows):
 
 ```json
 {
   "mcpServers": {
     "shopify": {
       "command": "npx",
-      "args": [
-        "shopify-mcp",
-        "--clientId",
-        "<YOUR_CLIENT_ID>",
-        "--clientSecret",
-        "<YOUR_CLIENT_SECRET>",
-        "--domain",
-        "<YOUR_SHOP>.myshopify.com"
-      ]
+      "args": ["shopify-mcp-multiaccount", "--stores=/absolute/path/to/shopify-stores.json"],
+      "env": {
+        "ACME_CLIENT_ID": "…",
+        "ACME_CLIENT_SECRET": "…",
+        "WIDGETS_ACCESS_TOKEN": "shpat_…"
+      }
     }
   }
 }
 ```
 
-**Static Access Token (legacy):**
+Use an **absolute** path for `--stores`; the server's working directory is not your project directory.
 
-```json
-{
-  "mcpServers": {
-    "shopify": {
-      "command": "npx",
-      "args": [
-        "shopify-mcp",
-        "--accessToken",
-        "<YOUR_ACCESS_TOKEN>",
-        "--domain",
-        "<YOUR_SHOP>.myshopify.com"
-      ]
-    }
-  }
-}
-```
-
-Locations for the Claude Desktop config file:
-
-- MacOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%/Claude/claude_desktop_config.json`
-
-### Usage with Claude Code
-
-**Client Credentials:**
+**Claude Code:**
 
 ```bash
-claude mcp add shopify -- npx shopify-mcp \
-  --clientId YOUR_CLIENT_ID \
-  --clientSecret YOUR_CLIENT_SECRET \
-  --domain your-store.myshopify.com
+claude mcp add shopify -- npx shopify-mcp-multiaccount \
+  --stores=/absolute/path/to/shopify-stores.json
 ```
 
-**Static Access Token (legacy):**
+### Configuration sources
+
+Resolved in this order — the first that yields anything wins:
+
+1. `--stores=<path>` or `SHOPIFY_STORES_FILE` — path to the JSON config
+2. `SHOPIFY_STORES` — the same JSON, inline
+3. Legacy single-store flags (below)
+
+### Single store
+
+The original flags still work unchanged, and no multi-store concepts appear in the tool schemas when only one store is configured:
 
 ```bash
-claude mcp add shopify -- npx shopify-mcp \
-  --accessToken YOUR_ACCESS_TOKEN \
-  --domain your-store.myshopify.com
+npx shopify-mcp-multiaccount --domain=your-store.myshopify.com --accessToken=shpat_xxx
+npx shopify-mcp-multiaccount --domain=your-store.myshopify.com --clientId=… --clientSecret=…
 ```
 
-### Alternative: Run Locally with Environment Variables
+Or via `.env` / environment: `MYSHOPIFY_DOMAIN`, `SHOPIFY_ACCESS_TOKEN`, or `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`.
 
-If you prefer to use environment variables instead of command-line arguments:
+### Additional options
 
-1. Create a `.env` file with your Shopify credentials:
+| Flag | Env var | Default | Purpose |
+|---|---|---|---|
+| `--stores` | `SHOPIFY_STORES_FILE` | — | Path to the store config file |
+| — | `SHOPIFY_STORES` | — | Store config as inline JSON |
+| `--defaultStore` | `SHOPIFY_DEFAULT_STORE` | single store, else none | Store active at startup |
+| `--apiVersion` | `SHOPIFY_API_VERSION` | `2026-01` | Admin API version |
 
-   **Client Credentials:**
-   ```
-   SHOPIFY_CLIENT_ID=your_client_id
-   SHOPIFY_CLIENT_SECRET=your_client_secret
-   MYSHOPIFY_DOMAIN=your-store.myshopify.com
-   ```
+## Working with multiple stores
 
-   **Static Access Token (legacy):**
-   ```
-   SHOPIFY_ACCESS_TOKEN=your_access_token
-   MYSHOPIFY_DOMAIN=your-store.myshopify.com
-   ```
+Three ways to target a store, in precedence order:
 
-2. Run the server with npx:
-   ```
-   npx shopify-mcp
-   ```
+1. **Explicit per call** — `get-orders` with `store: "widgets"`. Does not change the active store.
+2. **Active store** — set by `switch-store`, or by `defaultStore` at startup.
+3. **Implicit** — with exactly one store configured, it is always the target.
 
-### Direct Installation (Optional)
+`switch-store` verifies credentials against the live API *before* switching and returns the shop's real name, so a switch either lands somewhere confirmed or leaves the active store untouched. Store targets can be given as an alias, a full domain, a label, or an unambiguous prefix of any of them.
 
-If you want to install the package globally:
+Destructive tools require an explicit `store` whenever more than one store is configured, so "cancel that order" can never silently resolve to the wrong shop.
 
-```
-npm install -g shopify-mcp
-```
+## Available Tools (46)
 
-Then run it:
+Every store-scoped tool below additionally accepts an optional `store` argument (alias, domain, or label) when more than one store is configured.
 
-```
-shopify-mcp --clientId=<ID> --clientSecret=<SECRET> --domain=<YOUR_SHOP>.myshopify.com
-```
+### Store Management (2 tools)
 
-### Additional Options
+1. **`list-stores`**
 
-- `--apiVersion`: Specify the Shopify API version (default: `2026-01`). Can also be set via `SHOPIFY_API_VERSION` environment variable.
+   - List every configured store with its alias, domain, auth mode, and which one is active. Makes no API calls, so it works even when credentials are wrong.
+   - Inputs: none
+   - Returns: `activeStore`, `storeCount`, and a `stores` array
 
-**⚠️ Important:** If you see errors about "SHOPIFY_ACCESS_TOKEN environment variable is required" when using command-line arguments, you might have a different package installed. Make sure you're using `shopify-mcp`, not `shopify-mcp-server`.
+2. **`switch-store`**
 
-## Available Tools (31)
+   - Make a different store active for subsequent calls. Verifies credentials against the Shopify API first; on failure the active store is left unchanged.
+   - Inputs:
+     - `store` (string, required): Alias, full domain, or label of the target store
+   - Returns: `activeStore`, `previousStore`, `shopName`, `currencyCode`, `timezone`
 
 ### Pagination, Sorting & Filtering
 
@@ -181,7 +188,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
    - Get all products or search by title with pagination and sorting
    - Inputs:
      - `searchTitle` (string, optional): Filter products by title (wraps in `title:*...*`)
-     - `limit` (number, default: 10): Maximum number of products to return
+     - `limit` (number, default: 10, max: 250): Maximum number of products to return
      - `query` (string, optional): Raw Shopify query string (e.g. `"status:active vendor:Nike tag:sale"`)
      - `sortKey` (string, optional): One of `CREATED_AT`, `ID`, `INVENTORY_TOTAL`, `PRODUCT_TYPE`, `PUBLISHED_AT`, `RELEVANCE`, `TITLE`, `UPDATED_AT`, `VENDOR`
      - `reverse` (boolean, optional): Reverse the sort order
@@ -284,7 +291,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
    - List customers with search, pagination, and sorting
    - Inputs:
      - `searchQuery` (string, optional): Freetext or Shopify query syntax (e.g. `"country:US tag:vip orders_count:>5"`)
-     - `limit` (number, default: 10): Maximum number of customers to return
+     - `limit` (number, default: 10, max: 250): Maximum number of customers to return
      - `sortKey` (string, optional): One of `CREATED_AT`, `ID`, `LAST_UPDATE`, `LOCATION`, `NAME`, `ORDERS_COUNT`, `RELEVANCE`, `TOTAL_SPENT`, `UPDATED_AT`
      - `reverse` (boolean, optional): Reverse the sort order
      - `after` / `before` (string, optional): Pagination cursors
@@ -293,7 +300,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
 
    - Get a single customer by ID with full details
    - Inputs:
-     - `id` (string, required): Shopify customer ID (numeric only, e.g. `"6276879810626"`)
+     - `id` (string, required): Shopify customer ID — numeric (`"6276879810626"`) or GID (`"gid://shopify/Customer/6276879810626"`)
    - Returns: name, email, phone, addresses, tags, note, tax status, amount spent, order count, metafields
 
 3. **`create-customer`**
@@ -314,7 +321,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
 
    - Update a customer's information
    - Inputs:
-     - `id` (string, required): Shopify customer ID (numeric only, e.g. `"6276879810626"`)
+     - `id` (string, required): Shopify customer ID — numeric (`"6276879810626"`) or GID (`"gid://shopify/Customer/6276879810626"`)
      - `firstName` (string, optional): Customer's first name
      - `lastName` (string, optional): Customer's last name
      - `email` (string, optional): Customer's email address
@@ -332,7 +339,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
 
    - Delete a customer
    - Inputs:
-     - `id` (string, required): Shopify customer ID (numeric only, e.g. `"6276879810626"`)
+     - `id` (string, required): Shopify customer ID — numeric (`"6276879810626"`) or GID (`"gid://shopify/Customer/6276879810626"`)
 
 6. **`customer-merge`**
 
@@ -359,7 +366,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
    - Get orders with filtering, pagination, and sorting
    - Inputs:
      - `status` (string, optional): `"any"`, `"open"`, `"closed"`, or `"cancelled"`. Default `"any"`
-     - `limit` (number, default: 10): Maximum number of orders to return
+     - `limit` (number, default: 10, max: 250): Maximum number of orders to return
      - `query` (string, optional): Raw Shopify query string (e.g. `"financial_status:paid fulfillment_status:shipped tag:rush"`)
      - `sortKey` (string, optional): One of `CREATED_AT`, `ORDER_NUMBER`, `TOTAL_PRICE`, `FINANCIAL_STATUS`, `FULFILLMENT_STATUS`, `UPDATED_AT`, `CUSTOMER_NAME`, `PROCESSED_AT`, `ID`, `RELEVANCE`
      - `reverse` (boolean, optional): Reverse the sort order
@@ -390,8 +397,8 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
 
    - Get orders for a specific customer with pagination and sorting
    - Inputs:
-     - `customerId` (string, required): Shopify customer ID (numeric only, e.g. `"6276879810626"`)
-     - `limit` (number, default: 10): Maximum number of orders to return
+     - `customerId` (string, required): Shopify customer ID — numeric (`"6276879810626"`) or GID (`"gid://shopify/Customer/6276879810626"`)
+     - `limit` (number, default: 10, max: 250): Maximum number of orders to return
      - `sortKey` (string, optional): Same sort keys as `get-orders`
      - `reverse` (boolean, optional): Reverse the sort order
      - `after` / `before` (string, optional): Pagination cursors
@@ -465,7 +472,7 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
    - Inputs:
      - `ownerId` (string, required): GID of any resource
      - `namespace` (string, optional): Filter by namespace
-     - `first` (number, default: 25): Number of metafields to return
+     - `first` (number, default: 25, max: 50): Number of metafields to return
      - `after` (string, optional): Pagination cursor
 
 2. **`set-metafields`**
@@ -520,13 +527,49 @@ The `get-orders` tool's `query` parameter supports [Shopify search syntax](https
 | `gateway` | `gateway:shopify_payments` |
 | `test` | `test:true` |
 
-## Debugging
+## Troubleshooting
 
-If you encounter issues, check Claude Desktop's MCP logs:
+The server writes a startup line to stderr naming the stores it loaded, e.g.:
 
 ```
-tail -n 20 -f ~/Library/Logs/Claude/mcp*.log
+shopify-mcp: 2 store(s) from file /path/to/shopify-stores.json — acme, widgets (active: acme)
 ```
+
+Claude Desktop's MCP logs:
+
+```
+tail -n 50 -f ~/Library/Logs/Claude/mcp*.log
+```
+
+| Symptom | Cause and fix |
+|---|---|
+| Server won't start; log shows `No Shopify stores configured` | The config path was not found or no legacy flags were passed. Use an absolute `--stores` path. |
+| Startup error naming a `${VAR}` | The config references an environment variable that isn't set in the MCP client's environment. Add it under `env` in the client config — the server does not inherit your shell. |
+| `Unknown store "…"` | The alias doesn't match. Call `list-stores` to see the configured aliases. |
+| `Shopify rejected the credentials (HTTP 401/403)` | Wrong token/secret, or the app lacks the Admin API scope for that operation. The message names the store. |
+| `… does not resolve to a Shopify store (HTTP 404)` | The `domain` is wrong — it must be the `*.myshopify.com` domain, not the storefront domain. |
+| `No store selected` | Several stores configured with no `defaultStore`. Use `switch-store`, pass `store` per call, or set `defaultStore`. |
+| Rate-limit errors under bulk work | The client already retries `THROTTLED` and 429 with backoff. Persistent failures mean the operation needs smaller pages (`limit`) or fewer parallel calls. |
+
+Verifying a config without an MCP client:
+
+```bash
+npm run build
+node dist/index.js --stores=/absolute/path/to/shopify-stores.json
+# prints the startup line to stderr, then waits for MCP traffic on stdin; Ctrl-C to exit
+```
+
+## Development
+
+```bash
+npm install
+npm run typecheck        # tsc --noEmit
+npm run build            # compile to dist/
+npm test                 # build + end-to-end MCP smoke test (no network required)
+npm run validate:graphql # validate every GraphQL document against the live Shopify schema
+```
+
+`test/smoke.mjs` drives the built server over real MCP stdio JSON-RPC and covers tool registration and metadata, multi-store targeting, required `store` on destructive tools, unreachable-store handling, and configuration-error exit codes.
 
 ## License
 

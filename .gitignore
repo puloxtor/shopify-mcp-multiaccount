@@ -21,4 +21,9 @@ build/
 
 # OS Files
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Local store configuration (contains credentials)
+shopify-stores.json
+stores.json
+*.stores.json

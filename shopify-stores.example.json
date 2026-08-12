@@ -1,0 +1,37 @@
+{
+  "$comment": [
+    "Copy to shopify-stores.json (gitignored) and point the server at it:",
+    "  shopify-mcp-multiaccount --stores=/absolute/path/to/shopify-stores.json",
+    "",
+    "Any string may reference an environment variable as ${VAR_NAME}, so this",
+    "file can be committed while the secrets stay in the environment.",
+    "",
+    "Each store needs either 'accessToken' (legacy custom apps) or both",
+    "'clientId' and 'clientSecret' (Dev Dashboard apps, January 2026+)."
+  ],
+
+  "defaultStore": "acme",
+
+  "stores": [
+    {
+      "alias": "acme",
+      "label": "ACME Retail (production)",
+      "domain": "acme.myshopify.com",
+      "clientId": "${ACME_CLIENT_ID}",
+      "clientSecret": "${ACME_CLIENT_SECRET}"
+    },
+    {
+      "alias": "widgets",
+      "label": "Widgets EU",
+      "domain": "widgets-eu.myshopify.com",
+      "accessToken": "${WIDGETS_ACCESS_TOKEN}"
+    },
+    {
+      "alias": "staging",
+      "label": "ACME staging",
+      "domain": "acme-staging.myshopify.com",
+      "accessToken": "${STAGING_ACCESS_TOKEN}",
+      "apiVersion": "2025-10"
+    }
+  ]
+}
