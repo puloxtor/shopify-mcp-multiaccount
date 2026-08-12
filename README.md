@@ -85,9 +85,46 @@ Any string may reference an environment variable as `${VAR_NAME}`, so the file c
 
 See [`shopify-stores.example.json`](./shopify-stores.example.json).
 
-### 3. Register the server
+### 3. Install
+
+This fork is not published to npm, so `npx shopify-mcp-multiaccount` will not resolve. Build it from a clone and reference `dist/index.js` by absolute path:
+
+```bash
+git clone https://github.com/puloxtor/shopify-mcp-multiaccount.git
+cd shopify-mcp-multiaccount
+npm install
+npm run build
+npm test          # optional: verifies the build end to end, no network needed
+```
+
+To get the `npx` form in the examples below, publish it under your own npm scope (`npm publish`) or link it locally with `npm link`.
+
+### 4. Register the server
 
 **Claude Desktop** — `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%/Claude/claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "shopify": {
+      "command": "node",
+      "args": [
+        "/absolute/path/to/shopify-mcp-multiaccount/dist/index.js",
+        "--stores=/absolute/path/to/shopify-stores.json"
+      ],
+      "env": {
+        "ACME_CLIENT_ID": "…",
+        "ACME_CLIENT_SECRET": "…",
+        "WIDGETS_ACCESS_TOKEN": "shpat_…"
+      }
+    }
+  }
+}
+```
+
+The MCP client does **not** inherit your shell environment, so every `${VAR}` referenced by the store config must be listed under `env` here.
+
+Once published, the same config via `npx`:
 
 ```json
 {
@@ -110,7 +147,7 @@ Use an **absolute** path for `--stores`; the server's working directory is not y
 **Claude Code:**
 
 ```bash
-claude mcp add shopify -- npx shopify-mcp-multiaccount \
+claude mcp add shopify -- node /absolute/path/to/shopify-mcp-multiaccount/dist/index.js \
   --stores=/absolute/path/to/shopify-stores.json
 ```
 
@@ -127,8 +164,8 @@ Resolved in this order — the first that yields anything wins:
 The original flags still work unchanged, and no multi-store concepts appear in the tool schemas when only one store is configured:
 
 ```bash
-npx shopify-mcp-multiaccount --domain=your-store.myshopify.com --accessToken=shpat_xxx
-npx shopify-mcp-multiaccount --domain=your-store.myshopify.com --clientId=… --clientSecret=…
+node dist/index.js --domain=your-store.myshopify.com --accessToken=shpat_xxx
+node dist/index.js --domain=your-store.myshopify.com --clientId=… --clientSecret=…
 ```
 
 Or via `.env` / environment: `MYSHOPIFY_DOMAIN`, `SHOPIFY_ACCESS_TOKEN`, or `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET`.
