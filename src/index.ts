@@ -3,10 +3,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import dotenv from "dotenv";
-import { GraphQLClient } from "graphql-request";
+import type { GraphQLClient } from "graphql-request";
 import minimist from "minimist";
 
 import { startHttpServer } from "./lib/httpServer.js";
+import { ResilientGraphQLClient } from "./lib/resilientClient.js";
 import { ShopifyAuth } from "./lib/shopifyAuth.js";
 import { storeManager } from "./lib/storeManager.js";
 import type { StoreEntry } from "./lib/storesConfig.js";
@@ -121,15 +122,19 @@ async function buildStoreRuntime(entry: StoreEntry): Promise<StoreRuntimeResult>
     accessToken = entry.accessToken!;
   }
 
-  const client = new GraphQLClient(
-    `https://${entry.domain}/admin/api/${API_VERSION}/graphql.json`,
-    {
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-    }
-  );
+  // ResilientGraphQLClient matches the two members ShopifyAuth and every tool
+  // actually use on a graphql-request GraphQLClient (.request, .setHeader),
+  // so this swap needs no other file changed. It adds a request timeout,
+  // retry with backoff on 429/5xx/network errors and Shopify's THROTTLED
+  // error, and errors that name the store and explain ACCESS_DENIED instead
+  // of embedding the whole GraphQL document.
+  const client = new ResilientGraphQLClient({
+    storeName: entry.name,
+    domain: entry.domain,
+    apiVersion: API_VERSION,
+    accessToken,
+    scopes: auth ? { granted: () => auth!.getGrantedScopes() } : undefined,
+  }) as unknown as GraphQLClient;
 
   // Let the auth manager hot-swap this store's token header on refresh
   if (auth) {
@@ -223,10 +228,17 @@ if (MCP_TRANSPORT === "http") {
     process.exit(1);
   }
 
-  startHttpServer({ port: PORT, authToken: MCP_AUTH_TOKEN, publicUrl, tools, serverInfo });
+  startHttpServer({
+    port: PORT,
+    authToken: MCP_AUTH_TOKEN,
+    publicUrl,
+    tools,
+    serverInfo,
+    multiStore: storeRuntimes.length > 1,
+  });
 } else if (MCP_TRANSPORT === "stdio") {
   const server = new McpServer(serverInfo);
-  registerTools(server, tools);
+  registerTools(server, tools, { multiStore: storeRuntimes.length > 1 });
 
   const transport = new StdioServerTransport();
   server

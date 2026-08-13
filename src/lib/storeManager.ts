@@ -5,6 +5,8 @@
  * knowing multiple stores exist.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import type { GraphQLClient } from "graphql-request";
 
 import type { ShopifyAuth } from "./shopifyAuth.js";
@@ -27,11 +29,39 @@ export class StoreManager {
   private currentStoreName: string | null = null;
   private routingClient: GraphQLClient | null = null;
 
+  /**
+   * Per-call override for which store `getCurrent()` resolves to.
+   *
+   * `currentStoreName` is process-wide, which is required for switch-shop to
+   * have any effect at all under the HTTP transport: each tool call arrives
+   * as its own stateless request (see httpServer.ts), so nothing but a
+   * server-side pointer can carry "switched to store X" from one request to
+   * the next. But that same process-wide pointer is shared by every
+   * concurrent caller — one session's switch-shop can retarget another
+   * session's in-flight call. `withStoreOverride` lets a single tool
+   * invocation (one that was given an explicit `store` argument, see
+   * toolUtils.ts) pin its own store for its own duration without touching
+   * the shared pointer other concurrent calls are relying on.
+   */
+  private readonly override = new AsyncLocalStorage<string>();
+
   register(store: StoreRuntime): void {
     if (this.stores.has(store.name)) {
       throw new Error(`Store "${store.name}" is already registered.`);
     }
     this.stores.set(store.name, store);
+  }
+
+  /**
+   * Scopes granted to a store's token, if known.
+   *
+   * `null` for a static access token (Shopify's OAuth exchange never ran, so
+   * there is no scope metadata to read) or before a client-credentials
+   * store's first token exchange. An empty array means the app really was
+   * granted nothing.
+   */
+  grantedScopes(name: string): string[] | null {
+    return this.stores.get(name)?.auth?.getGrantedScopes() ?? null;
   }
 
   list(): StoreSummary[] {
@@ -43,15 +73,20 @@ export class StoreManager {
   }
 
   getCurrent(): StoreRuntime {
-    if (!this.currentStoreName) {
+    const name = this.override.getStore() ?? this.currentStoreName;
+    if (!name) {
       throw new Error("No Shopify store is currently selected.");
     }
-    // setCurrent() guarantees currentStoreName only ever names a registered store.
-    return this.stores.get(this.currentStoreName)!;
+    const store = this.stores.get(name);
+    if (!store) {
+      const available = Array.from(this.stores.keys()).join(", ") || "(none registered)";
+      throw new Error(`Unknown store "${name}". Available stores: ${available}`);
+    }
+    return store;
   }
 
   getCurrentName(): string | null {
-    return this.currentStoreName;
+    return this.override.getStore() ?? this.currentStoreName;
   }
 
   setCurrent(name: string): StoreRuntime {
@@ -62,6 +97,15 @@ export class StoreManager {
     }
     this.currentStoreName = name;
     return store;
+  }
+
+  /** Run `fn` with `getCurrent()`/`getCurrentName()` pinned to `name` for its duration. */
+  withStoreOverride<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    if (!this.stores.has(name)) {
+      const available = Array.from(this.stores.keys()).join(", ") || "(none registered)";
+      return Promise.reject(new Error(`Unknown store "${name}". Available stores: ${available}`));
+    }
+    return this.override.run(name, fn);
   }
 
   /**

@@ -17,8 +17,11 @@ type SwitchShopInput = z.infer<typeof SwitchShopInputSchema>;
 const switchShop = {
   name: "switch-shop",
   description:
-    "Switch the active Shopify store. All subsequent tool calls (get-products, create-product, get-orders, etc.) act on this store until switch-shop is called again. Wait for this tool's result before issuing dependent tool calls.",
+    "Switch the active Shopify store. All subsequent tool calls (get-products, create-product, get-orders, etc.) act on this store until switch-shop is called again. Wait for this tool's result before issuing dependent tool calls. " +
+    "This changes a server-wide pointer, so under concurrent use prefer passing `store` on individual calls instead.",
   schema: SwitchShopInputSchema,
+  scope: "server" as const,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
 
   initialize(_client: GraphQLClient) {
     // No-op: switching stores only mutates storeManager's current-store

@@ -35,9 +35,17 @@ export interface StartHttpServerOptions {
   publicUrl: URL;
   tools: ShopifyTool[];
   serverInfo: { name: string; version: string; description: string };
+  multiStore?: boolean;
 }
 
-export function startHttpServer({ port, authToken, publicUrl, tools, serverInfo }: StartHttpServerOptions): void {
+export function startHttpServer({
+  port,
+  authToken,
+  publicUrl,
+  tools,
+  serverInfo,
+  multiStore = false,
+}: StartHttpServerOptions): void {
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
@@ -102,7 +110,7 @@ export function startHttpServer({ port, authToken, publicUrl, tools, serverInfo 
 
   app.post("/mcp", requireAuth, async (req, res) => {
     const server = new McpServer(serverInfo);
-    registerTools(server, tools);
+    registerTools(server, tools, { multiStore });
     try {
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       await server.connect(transport);

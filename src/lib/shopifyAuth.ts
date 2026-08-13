@@ -27,15 +27,33 @@ interface TokenResponse {
 // Refresh 5 minutes before actual expiry to avoid race conditions.
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
 
+/**
+ * Split the OAuth `scope` field. Shopify returns it comma-separated; the
+ * OAuth spec defines it as space-separated. An absent/empty field is treated
+ * as "granted nothing" — the case that otherwise looks like a broken server
+ * (shop info works, every resource query returns ACCESS_DENIED).
+ */
+export function parseScopes(scope: string | undefined | null): string[] {
+  if (!scope) return [];
+  return scope.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+}
+
 export class ShopifyAuth {
   private config: ClientCredentialsConfig;
   private accessToken: string | null = null;
   private expiresAt = 0;
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   private graphqlClient: GraphQLClient | null = null;
+  /** null until the first successful token exchange. */
+  private scopes: string[] | null = null;
 
   constructor(config: ClientCredentialsConfig) {
     this.config = config;
+  }
+
+  /** Scopes granted to the current token, or null before the first exchange. */
+  getGrantedScopes(): string[] | null {
+    return this.scopes;
   }
 
   /** Attach the GraphQL client so the token can be hot-swapped on refresh. */
@@ -95,6 +113,7 @@ export class ShopifyAuth {
     const data = (await res.json()) as TokenResponse;
     this.accessToken = data.access_token;
     this.expiresAt = Date.now() + data.expires_in * 1000;
+    this.scopes = parseScopes(data.scope);
 
     // Hot-swap the header on the existing GraphQL client so every tool
     // automatically picks up the new token.
