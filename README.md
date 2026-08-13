@@ -609,7 +609,7 @@ Scopes are baked into a token when it is issued, so changing them never affects 
 
 Each store has its own installation, so this must be done for each one independently.
 
-Scopes the tools need: `read_products`/`write_products`, `read_orders`/`write_orders`, `read_customers`/`write_customers`, `read_draft_orders`/`write_draft_orders`, `read_inventory`/`write_inventory`, `read_locations`, `read_markets`, `read_price_lists`, plus `read_fulfillments`/`write_fulfillments` for the fulfillment tools.
+Scopes the tools need, at minimum: `read_products`/`write_products`, `read_orders`/`write_orders`, `read_customers`/`write_customers`, `read_draft_orders`/`write_draft_orders`, `read_inventory`/`write_inventory`, `read_locations`, and `read_markets`. The fulfillment and price-list tools need additional scopes — rather than guessing, enable a tool's scope when its first call tells you which one is missing; the error names it.
 
 Verifying a config without an MCP client:
 
