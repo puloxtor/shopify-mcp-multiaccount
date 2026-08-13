@@ -118,6 +118,16 @@ export class StoreRegistry {
     return this.summary(resolved);
   }
 
+  /**
+   * Scopes the store's token was granted, if known.
+   *
+   * `null` for a static access token (Shopify returns no scope metadata with
+   * one) or before the first client-credentials exchange.
+   */
+  grantedScopes(alias: string): string[] | null {
+    return this.connections.get(alias)?.tokens.grantedScopes ?? null;
+  }
+
   getClient(alias: string): ShopifyClient {
     const existing = this.connections.get(alias);
     if (existing) return existing.client;

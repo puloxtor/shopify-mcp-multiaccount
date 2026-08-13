@@ -583,10 +583,33 @@ tail -n 50 -f ~/Library/Logs/Claude/mcp*.log
 | Server won't start; log shows `No Shopify stores configured` | The config path was not found or no legacy flags were passed. Use an absolute `--stores` path. |
 | Startup error naming a `${VAR}` | The config references an environment variable that isn't set in the MCP client's environment. Add it under `env` in the client config — the server does not inherit your shell. |
 | `Unknown store "…"` | The alias doesn't match. Call `list-stores` to see the configured aliases. |
-| `Shopify rejected the credentials (HTTP 401/403)` | Wrong token/secret, or the app lacks the Admin API scope for that operation. The message names the store. |
+| `Shopify rejected the credentials (HTTP 401/403)` | Wrong token/secret. The message names the store. |
+| `get-shop-info` works but **every** other tool returns `Access denied` | The app is installed on that store with no Admin API access scopes. See below. |
+| `Access denied for products …` | The app's token lacks that field's scope. The error names the scope and lists what is currently granted. |
 | `… does not resolve to a Shopify store (HTTP 404)` | The `domain` is wrong — it must be the `*.myshopify.com` domain, not the storefront domain. |
 | `No store selected` | Several stores configured with no `defaultStore`. Use `switch-store`, pass `store` per call, or set `defaultStore`. |
 | Rate-limit errors under bulk work | The client already retries `THROTTLED` and 429 with backoff. Persistent failures mean the operation needs smaller pages (`limit`) or fewer parallel calls. |
+
+### Access scopes
+
+A token can be perfectly valid and still be granted nothing. When that happens `get-shop-info` succeeds — reading `shop { … }` needs no scope — while every product, order, customer, collection and location query fails with `ACCESS_DENIED`. It reads like a broken server; it is an app-configuration problem.
+
+`switch-store` reports the granted scopes for the store it switches to, and warns explicitly when the list is empty, so this shows up at switch time rather than as a wall of denials. To check without switching:
+
+```graphql
+query { currentAppInstallation { accessScopes { handle } } }
+```
+
+An empty array means no scopes are granted. To fix, per store:
+
+- **Custom app (per-store Admin API token)**: Shopify Admin → **Settings → Apps and sales channels → Develop apps → your app → Configuration → Admin API integration**, enable the scopes you need, save, then reinstall/update the app on that store to reissue the token.
+- **Dev Dashboard / client-credentials app**: declare the scopes in the app's configuration (`shopify.app.toml` `scopes`, or the Dev Dashboard), release the change, then reinstall the app on the store. There is no merchant re-consent step for the client-credentials grant — the next token exchange picks up the new scopes.
+
+Scopes are baked into a token when it is issued, so changing them never affects tokens already in hand. After fixing, restart the server so a fresh token is exchanged.
+
+Each store has its own installation, so this must be done for each one independently.
+
+Scopes the tools need: `read_products`/`write_products`, `read_orders`/`write_orders`, `read_customers`/`write_customers`, `read_draft_orders`/`write_draft_orders`, `read_inventory`/`write_inventory`, `read_locations`, `read_markets`, `read_price_lists`, plus `read_fulfillments`/`write_fulfillments` for the fulfillment tools.
 
 Verifying a config without an MCP client:
 

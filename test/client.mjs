@@ -59,11 +59,12 @@ function fakeShopify(script) {
 }
 
 /** Token provider that counts issuances so refreshes are observable. */
-function countingTokens(kind = "client_credentials") {
+function countingTokens(kind = "client_credentials", grantedScopes = null) {
   let issued = 0;
   let current = "token-1";
   return {
     kind,
+    grantedScopes,
     get issued() {
       return issued;
     },
@@ -211,6 +212,102 @@ console.log("\n9. A hung upstream times out instead of hanging the tool call");
   check("gives up promptly", elapsed < 5000, `took ${elapsed}ms`);
   check("reports a timeout", /within 0.3s|Could not reach/.test(message), message);
   await api.close();
+}
+
+console.log("\n10. ACCESS_DENIED names the missing scope instead of just the field");
+{
+  const denial = {
+    body: {
+      errors: [
+        {
+          message: "Access denied for products field.",
+          extensions: { code: "ACCESS_DENIED" },
+        },
+      ],
+    },
+  };
+
+  // Scopes granted, but not the one this field needs.
+  const api = await fakeShopify([denial]);
+  let message = "";
+  try {
+    await makeClient(api.endpoint, countingTokens("client_credentials", ["read_orders"])).request(
+      "query { products(first: 1) { edges { node { id } } } }",
+    );
+  } catch (error) {
+    message = error.message;
+  }
+  check("names the denied field", message.includes("products"), message);
+  check("infers the required scope", message.includes("read_products"), message);
+  check("reports what is currently granted", message.includes("read_orders"), message);
+  await api.close();
+
+  // The case from the field report: app installed with no scopes at all.
+  const api2 = await fakeShopify([denial]);
+  let message2 = "";
+  try {
+    await makeClient(api2.endpoint, countingTokens("client_credentials", [])).request(
+      "query { products(first: 1) { edges { node { id } } } }",
+    );
+  } catch (error) {
+    message2 = error.message;
+  }
+  check(
+    "calls out a token with zero scopes",
+    /no Admin API access scopes at all/.test(message2),
+    message2,
+  );
+  check("tells the user to reinstall", /reinstall/i.test(message2), message2);
+  check("does not retry a permission failure", api2.received.length === 1);
+  await api2.close();
+
+  // Shopify sometimes states the scope itself; prefer that over inference.
+  const api3 = await fakeShopify([
+    {
+      body: {
+        errors: [
+          {
+            message: "Access denied for giftCards field.",
+            extensions: {
+              code: "ACCESS_DENIED",
+              requiredAccess: "read_gift_cards access scope required.",
+            },
+          },
+        ],
+      },
+    },
+  ]);
+  let message3 = "";
+  try {
+    await makeClient(api3.endpoint, countingTokens("client_credentials", ["read_orders"])).request(
+      "query { giftCards(first: 1) { edges { node { id } } } }",
+    );
+  } catch (error) {
+    message3 = error.message;
+  }
+  check(
+    "prefers Shopify's own requiredAccess text",
+    message3.includes("read_gift_cards"),
+    message3,
+  );
+  await api3.close();
+}
+
+console.log("\n11. Token-exchange scope parsing");
+{
+  const { parseScopes } = await import("../dist/lib/shopifyAuth.js");
+  check("absent scope means unknown", parseScopes(undefined) === null);
+  check("empty scope means nothing granted", JSON.stringify(parseScopes("")) === "[]");
+  check(
+    "comma-separated scopes parse",
+    JSON.stringify(parseScopes("read_products,read_orders")) ===
+      '["read_products","read_orders"]',
+  );
+  check(
+    "space-separated scopes parse",
+    JSON.stringify(parseScopes("read_products read_orders")) ===
+      '["read_products","read_orders"]',
+  );
 }
 
 console.log(

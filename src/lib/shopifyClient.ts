@@ -33,8 +33,39 @@ export interface ShopifyClientOptions {
 
 interface GraphQLResponseError {
   message: string;
-  extensions?: { code?: string; [key: string]: unknown };
+  extensions?: {
+    code?: string;
+    /** Shopify sometimes states the missing scope outright, e.g. "read_products access scope required." */
+    requiredAccess?: string;
+    [key: string]: unknown;
+  };
 }
+
+/**
+ * Admin API root fields mapped to the scope that gates them.
+ *
+ * Only unambiguous mappings are listed; anything else falls back to generic
+ * advice rather than naming a scope that might be wrong.
+ */
+const FIELD_SCOPES: Record<string, string> = {
+  products: "read_products",
+  product: "read_products",
+  productVariants: "read_products",
+  collections: "read_products",
+  collection: "read_products",
+  orders: "read_orders",
+  order: "read_orders",
+  draftOrders: "read_draft_orders",
+  draftOrder: "read_draft_orders",
+  customers: "read_customers",
+  customer: "read_customers",
+  locations: "read_locations",
+  location: "read_locations",
+  inventoryItems: "read_inventory",
+  inventoryItem: "read_inventory",
+  inventoryLevel: "read_inventory",
+  markets: "read_markets",
+};
 
 interface GraphQLResponseBody<T> {
   data?: T;
@@ -238,6 +269,15 @@ export class ShopifyClient {
         };
       }
 
+      if (codes.includes("ACCESS_DENIED")) {
+        return {
+          kind: "fatal",
+          message: this.explainAccessDenied(body.errors, message),
+          status: res.status,
+          code: "ACCESS_DENIED",
+        };
+      }
+
       return {
         kind: "fatal",
         message: `Shopify API error: ${message || "unknown GraphQL error"}`,
@@ -255,6 +295,63 @@ export class ShopifyClient {
     }
 
     return { kind: "ok", data: body.data };
+  }
+
+  /**
+   * Explain an ACCESS_DENIED, which on its own says only "Access denied for
+   * products field" and sends people hunting through app settings.
+   *
+   * The token's granted scopes are already known for client-credentials apps
+   * (Shopify returns them from the token exchange), so the common case — an
+   * app installed with no Admin API scopes configured, where `shop { … }`
+   * succeeds and every resource query fails — can be named outright.
+   */
+  private explainAccessDenied(
+    errors: GraphQLResponseError[],
+    joinedMessage: string,
+  ): string {
+    const fields = errors
+      .map((e) => /Access denied for (\w+)/.exec(e.message)?.[1])
+      .filter((f): f is string => Boolean(f));
+
+    const stated = errors
+      .map((e) => e.extensions?.requiredAccess)
+      .find((r): r is string => typeof r === "string" && r.length > 0);
+
+    const inferred = fields
+      .map((f) => FIELD_SCOPES[f])
+      .filter((s): s is string => Boolean(s));
+    const needed = [...new Set(inferred)];
+
+    const parts = [
+      `Access denied${fields.length ? ` for ${[...new Set(fields)].join(", ")}` : ""} on ${this.domain}.`,
+    ];
+
+    const granted = this.options.tokens.grantedScopes;
+    if (granted !== null && granted.length === 0) {
+      parts.push(
+        `This app's token was granted no Admin API access scopes at all, so every resource query will fail while shop info keeps working.`,
+        `Configure the scopes on the app and reinstall it on this store, then restart the server so a new token is issued.`,
+      );
+    } else {
+      if (stated) {
+        parts.push(`Shopify says: ${stated}`);
+      } else if (needed.length) {
+        parts.push(`Needs the ${needed.join(" and ")} scope${needed.length > 1 ? "s" : ""}.`);
+      } else {
+        parts.push(`The app's token is missing the Admin API scope for this field.`);
+      }
+      if (granted?.length) {
+        parts.push(`Currently granted: ${granted.join(", ")}.`);
+      }
+      parts.push(
+        `Scope changes only apply to newly issued tokens — update the app's scopes, reinstall it on this store, then restart the server.`,
+      );
+    }
+
+    if (!fields.length && joinedMessage) parts.push(`(${joinedMessage})`);
+
+    return parts.join(" ");
   }
 
   private networkError(error: unknown, attempts: number): ShopifyApiError {

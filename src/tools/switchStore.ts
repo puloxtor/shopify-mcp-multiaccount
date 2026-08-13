@@ -11,6 +11,11 @@ const SwitchStoreInputSchema = z.object({
 });
 type SwitchStoreInput = z.infer<typeof SwitchStoreInputSchema>;
 
+// `appInstallation.accessScopes` is what actually gates every other tool, and
+// it needs no scope of its own to read — so verifying it here turns the most
+// common misconfiguration (an app installed with no Admin API scopes, where
+// shop info succeeds and every resource query returns ACCESS_DENIED) into an
+// answer at switch time rather than a wall of denials later.
 const VERIFY_QUERY = gql`
   #graphql
 
@@ -20,6 +25,11 @@ const VERIFY_QUERY = gql`
       myshopifyDomain
       currencyCode
       ianaTimezone
+    }
+    currentAppInstallation {
+      accessScopes {
+        handle
+      }
     }
   }
 `;
@@ -31,6 +41,9 @@ interface VerifyResponse {
     currencyCode: string;
     ianaTimezone: string;
   };
+  currentAppInstallation?: {
+    accessScopes?: Array<{ handle: string }> | null;
+  } | null;
 }
 
 const switchStore = {
@@ -67,6 +80,11 @@ const switchStore = {
 
     registry.setActive(target.alias);
 
+    const scopes = (data.currentAppInstallation?.accessScopes ?? []).map(
+      (s) => s.handle,
+    );
+    const message = `Switched to "${target.alias}" — ${data.shop.name} (${data.shop.myshopifyDomain}). Verified against the Shopify API.`;
+
     return {
       activeStore: target.alias,
       previousStore: previous,
@@ -75,7 +93,10 @@ const switchStore = {
       shopName: data.shop.name,
       currencyCode: data.shop.currencyCode,
       timezone: data.shop.ianaTimezone,
-      message: `Switched to "${target.alias}" — ${data.shop.name} (${data.shop.myshopifyDomain}). Verified against the Shopify API.`,
+      accessScopes: scopes,
+      message: scopes.length
+        ? message
+        : `${message} WARNING: this app has NO Admin API access scopes on this store, so every tool except get-shop-info will fail with ACCESS_DENIED. Configure the app's scopes and reinstall it on this store, then restart the server.`,
     };
   },
 };

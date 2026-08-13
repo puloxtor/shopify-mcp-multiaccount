@@ -22,10 +22,22 @@ export interface TokenProvider {
   invalidate(): void;
   /** Human-readable auth mode, for diagnostics. */
   readonly kind: "access_token" | "client_credentials";
+  /**
+   * Scopes the current token was granted, once known.
+   *
+   * `null` means "not known" (a static token carries no such metadata, and a
+   * client-credentials token is unknown until first exchange). An empty array
+   * means the token really was granted nothing — the app is installed but has
+   * no Admin API access scopes configured, which makes every resource query
+   * fail with ACCESS_DENIED while `shop { … }` keeps working.
+   */
+  readonly grantedScopes: string[] | null;
 }
 
 export class StaticTokenProvider implements TokenProvider {
   readonly kind = "access_token" as const;
+  /** A static token carries no scope metadata; it must be queried from the API. */
+  readonly grantedScopes = null;
 
   constructor(private readonly token: string) {}
 
@@ -62,10 +74,15 @@ export class ClientCredentialsProvider implements TokenProvider {
 
   private token: string | null = null;
   private expiresAt = 0;
+  private scopes: string[] | null = null;
   /** De-duplicates concurrent refreshes so parallel tool calls exchange once. */
   private inFlight: Promise<string> | null = null;
 
   constructor(private readonly config: ClientCredentialsConfig) {}
+
+  get grantedScopes(): string[] | null {
+    return this.scopes;
+  }
 
   async getToken(): Promise<string> {
     if (this.token && Date.now() < this.expiresAt - REFRESH_MARGIN_MS) {
@@ -140,8 +157,22 @@ export class ClientCredentialsProvider implements TokenProvider {
     this.token = data.access_token;
     // Default to 24 h if Shopify ever omits expires_in.
     this.expiresAt = Date.now() + (data.expires_in ?? 86_400) * 1000;
+    this.scopes = parseScopes(data.scope);
     return this.token;
   }
+}
+
+/**
+ * Split the OAuth `scope` field, which Shopify returns comma-separated and the
+ * OAuth spec defines as space-separated. An absent field means "unknown"; a
+ * present-but-empty one means "genuinely nothing granted".
+ */
+export function parseScopes(scope: string | undefined): string[] | null {
+  if (scope === undefined || scope === null) return null;
+  return scope
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /**
