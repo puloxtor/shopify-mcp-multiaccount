@@ -1,6 +1,16 @@
-# Shopify MCP Server
+# Shopify MCP Server — multi-store fork
 
-(please leave a star if you like!)
+A fork of [GeLi2001/shopify-mcp](https://github.com/GeLi2001/shopify-mcp) that adds:
+
+- **Several Shopify stores in one server** — configure them with `SHOPIFY_STORES`, then use `list-shops` / `switch-shop`, or pass `store` on any single tool call
+- **Remote deployment** — Streamable HTTP transport with a `/health` check and a ready `railway.json`
+- **Claude connectors** — a built-in OAuth 2.1 sign-in (dynamic client registration + PKCE) so claude.ai and Claude Desktop can add it as a custom connector
+- **Raw GraphQL tools** — `graphql-query` / `graphql-mutation` for anything without a dedicated tool
+- **Clearer failures** — retries and throttling, per-store connection isolation, and `ACCESS_DENIED` errors that name the missing Admin API scopes
+
+This fork is not published to npm; build it from source with `npm install && npm run build && npm start`. Everything below the fork-specific sections still applies as in upstream.
+
+---
 
 MCP Server for Shopify API, enabling interaction with store data through GraphQL API. This server provides tools for managing products, customers, orders, and more.
 
@@ -219,7 +229,11 @@ An unauthenticated `GET /health` route is also exposed for platform health check
 3. Deploy. Railway will run `npm run build` then `npm start`, and health-check `GET /health`.
 4. Point your MCP client at `https://<your-app>.up.railway.app/mcp` using the Streamable HTTP transport, sending `Authorization: Bearer <MCP_AUTH_TOKEN>` on every request — consult your client's docs for how to attach a custom header to a remote MCP server (for example, Claude Code's `claude mcp add --transport http <name> <url> --header "Authorization: Bearer <token>"`).
 
-This mode is designed for a single trusted user/team with one shared secret, not multi-tenant use — it doesn't implement per-user OAuth.
+#### Adding it as a Claude connector (claude.ai / Claude Desktop)
+
+The Connectors UI needs a real sign-in step rather than a custom header, so the HTTP server also runs a minimal OAuth 2.1 authorization server (metadata discovery, dynamic client registration, authorization code + PKCE). Add `https://<your-app>.up.railway.app/mcp` as a custom connector; Claude opens a login form, and you sign in with the same `MCP_AUTH_TOKEN`. Set `MCP_PUBLIC_URL` if the public URL can't be detected (on Railway, `RAILWAY_PUBLIC_DOMAIN` is used automatically).
+
+Clients, codes and tokens are kept in memory, so connectors re-authenticate after a restart. This is built for one trusted user or team sharing one secret, not for multi-tenant use.
 
 ## Available Tools (31)
 
@@ -556,6 +570,11 @@ All list query tools (`get-products`, `get-customers`, `get-orders`, `get-custom
      - `id` (string, required): GID of the resource
      - `tags` (array of strings, required): Tags to add or remove
      - `action` (string, required): `"add"` or `"remove"`
+
+### GraphQL passthrough (2 tools)
+
+1. **`graphql-query`** — run any read-only Admin GraphQL query against the active (or given) store, e.g. `currentAppInstallation { accessScopes { handle } }` to see which scopes a token really has
+2. **`graphql-mutation`** — run any Admin GraphQL mutation
 
 ### Store Management (2 tools)
 
